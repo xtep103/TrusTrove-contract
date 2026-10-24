@@ -4,8 +4,6 @@ target/
 **/*.rs.bk
 
 # Environment files
-.env
-.env.local
 
 # Editor / IDE
 *.swp
@@ -47,3 +45,5 @@ contracts/*/test_snapshots/
 /create_issues.ps1
 .gitignore
 branch_structure.json
+config.bat
+node_modules

@@ -254,7 +254,17 @@ pub struct MockAgentRegistry;
 #[contractimpl]
 impl MockAgentRegistry {
     pub fn get_agent(env: Env, agent_id: Symbol) -> Option<crate::Agent> {
+        let count_key = Symbol::new(&env, "get_agent_calls");
+        let calls: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
+        env.storage().instance().set(&count_key, &(calls + 1));
         env.storage().persistent().get(&AgentKey(agent_id))
+    }
+
+    pub fn get_agent_calls(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&Symbol::new(&env, "get_agent_calls"))
+            .unwrap_or(0)
     }
 
     pub fn register_agent(env: Env, agent_id: Symbol, agent: crate::Agent) {
@@ -491,6 +501,43 @@ fn test_submit_attestation_rejects_malformed_payload_with_typed_error() {
     });
     assert!(!emitted_attestation);
 }
+#[test]
+fn test_submit_attestation_rejects_invalid_recovery_id_before_registry_lookup() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + DEFAULT_DUE_OFFSET;
+    let invoice_id = client.create(&issuer, &buyer, &DEFAULT_FACE_VALUE, &due_date, &usdc);
+
+    let agent_id = Symbol::new(&env, "test_agent");
+    let registry_id = env.register(MockAgentRegistry, ());
+    let registry_client = MockAgentRegistryClient::new(&env, &registry_id);
+    client.set_agent_registry_contract(&registry_id);
+
+    let payload = crate::AttestationPayload {
+        domain_separator: BytesN::from_array(&env, &crate::ATTESTATION_DOMAIN_SEPARATOR),
+        invoice_id: invoice_id.clone(),
+        contract_address: client.address.clone(),
+        network_id: env.ledger().network_id(),
+        risk_score: 5000,
+        evidence_hash: BytesN::from_array(&env, &[9u8; 32]),
+        agent_id,
+        nonce: 1,
+        valid_until: u64::MAX,
+    };
+    let payload_bytes = payload.to_xdr(&env);
+    let mut sig_bytes = [0u8; 65];
+    sig_bytes[64] = 4;
+    let signature = BytesN::from_array(&env, &sig_bytes);
+
+    let result = client.try_submit_attestation(&invoice_id, &payload_bytes, &signature);
+    assert_eq!(
+        result,
+        Err(Ok(InvoiceError::InvalidRecoveryId.into())),
+        "invalid recovery id should return the typed error"
+    );
+    assert_eq!(registry_client.get_agent_calls(), 0);
+    assert!(client.get_attestation(&invoice_id).is_none());
+}
+
 #[test]
 #[should_panic(expected = "Error(Contract, #21)")]
 fn test_submit_attestation_untrusted_signer_wrong_pubkey() {
